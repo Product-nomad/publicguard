@@ -1,0 +1,48 @@
+{
+  "name": "publicguard",
+  "version": "0.1.0",
+  "description": "Free, constructive notification service for exposed API keys in public GitHub repos. Companion to SessionGuard / attestloop.",
+  "type": "module",
+  "bin": {
+    "publicguard": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "build:prod": "rm -rf dist && tsc -p tsconfig.build.json",
+    "dev": "tsc --watch",
+    "start": "node dist/cli.js",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check src",
+    "lint:fix": "biome check --write src",
+    "format": "biome format --write src",
+    "test": "npm run build && node --test --test-reporter=spec $(find dist -name '*.test.js')",
+    "check": "npm run typecheck && npm run lint && npm test"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "keywords": [
+    "security",
+    "secrets-scan",
+    "github",
+    "public-repos",
+    "credential-leak",
+    "sessionguard"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@biomejs/biome": "2.4.13",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.5.0"
+  },
+  "dependencies": {
+    "@sessionguard/cli": "^0.3.0",
+    "better-sqlite3": "^11.10.0"
+  }
+}
