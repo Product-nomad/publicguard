@@ -25,6 +25,8 @@ const FP_PATH_FRAGMENTS = [
   ".env.template",
   ".env.test",
   ".env.local.example",
+  ".env.fake",
+  ".fake",
   "README",
   "readme",
   "CHANGELOG",

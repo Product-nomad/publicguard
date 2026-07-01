@@ -9,6 +9,27 @@ function isKillSwitchActive(db: DB): boolean {
   return !!process.env["PUBLICGUARD_PAUSE"] || db.isPaused();
 }
 
+const FP_REPO_NAME_FRAGMENTS = [
+  "example",
+  "demo",
+  "tutorial",
+  "sample",
+  "test",
+  "honeypot",
+  "fake",
+  "dummy",
+  "placeholder",
+  "boilerplate",
+  "template",
+  "starter",
+  "scaffold",
+];
+
+function isFalsePositiveRepo(repoName: string): boolean {
+  const lower = repoName.toLowerCase();
+  return FP_REPO_NAME_FRAGMENTS.some((f) => lower.includes(f));
+}
+
 export interface ScanOptions {
   /** Results to fetch per seed query. Default 10. Max 30. */
   perQuery?: number;
@@ -75,6 +96,14 @@ export async function runScan(
       // DB exclusion check — before any API call to the repo.
       if (exclusions.isExcluded(result.repoOwner, result.repoName)) {
         log(`  [EXCLUDED] ${result.repo}`);
+        summary.skippedExcluded++;
+        continue;
+      }
+
+      // Repo-name FP filter — catches honeypot/example/demo repos where
+      // committed secrets are intentional, not accidental.
+      if (isFalsePositiveRepo(result.repoName)) {
+        log(`  [FP-REPO] ${result.repo} (repo name suggests non-production)`);
         summary.skippedExcluded++;
         continue;
       }
