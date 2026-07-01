@@ -17,7 +17,9 @@ export interface QueuedFinding {
   detectorId: string;
   detectorLabel: string;
   lineNumber: number | null;
+  matchIndex: number;
   preview: string | null;
+  valueHash: string;
   foundAt: string;
   status: FindingStatus;
   issueUrl: string | null;

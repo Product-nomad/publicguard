@@ -140,6 +140,7 @@ Scan complete:
   Files inspected:  ${inspected}  (after repo/path filters)
   New findings:     ${summary.newFindings}
   Duplicates:       ${summary.skippedDuplicates}
+  Same-value dupes: ${summary.skippedDuplicateValue}  (same secret already reported elsewhere in the repo)
 
 Suppression breakdown:
   fp-repo:          ${summary.suppressedByRepo}   (repo name suggests non-production)

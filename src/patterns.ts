@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 /**
  * Credential-detection patterns ported from SessionGuard / agentaudit.
  * Same regex/entropy detectors, different input source (public GitHub commits
@@ -132,11 +134,70 @@ export interface SecretHit {
   index: number;
   length: number;
   preview: string;
+  /**
+   * One-way SHA-256 hash of the raw match. Not the credential value itself
+   * and not reversible — lets us recognize "this exact secret was already
+   * reported elsewhere in this repo" without persisting anything that could
+   * be used to reconstruct or authenticate with the credential (see
+   * DECISIONS.md: "Never store the credential value").
+   */
+  valueHash: string;
 }
 
 export function redact(match: string): string {
   if (match.length <= 8) return "*".repeat(match.length);
   return `${match.slice(0, 4)}…${match.slice(-4)}`;
+}
+
+function hashValue(match: string): string {
+  return createHash("sha256").update(match).digest("hex");
+}
+
+/**
+ * Shannon entropy in bits/char. Catches degenerate, low-diversity strings
+ * (repeated/near-repeated characters) that dodge the placeholder regex list.
+ * It's a blunt instrument — sequential-but-diverse strings like "12345678"
+ * still score near-maximal entropy — so this is a floor, not a strength
+ * estimator. Good enough to filter obvious noise before a human reviews.
+ */
+function shannonEntropyBitsPerChar(s: string): number {
+  if (s.length === 0) return 0;
+  const counts = new Map<string, number>();
+  for (const ch of s) counts.set(ch, (counts.get(ch) ?? 0) + 1);
+  let entropy = 0;
+  for (const count of counts.values()) {
+    const p = count / s.length;
+    entropy -= p * Math.log2(p);
+  }
+  return entropy;
+}
+
+const MIN_PASSWORD_ENTROPY_BITS_PER_CHAR = 2.8;
+
+/**
+ * A JWT-shaped regex match (three dot-separated base64url segments) isn't
+ * necessarily a real JWT — plenty of hashes/tokens happen to contain dots.
+ * Decoding the payload and requiring valid JSON weeds those out. Expired
+ * tokens (past `exp`) are much lower risk than live ones, so we keep them
+ * but mark them for a reviewer instead of dropping the signal entirely.
+ */
+function decodeJwtPayload(match: string): Record<string, unknown> | null {
+  const payloadSegment = match.split(".")[1];
+  if (!payloadSegment) return null;
+  try {
+    const padded = payloadSegment.replace(/-/g, "+").replace(/_/g, "/");
+    const pad = (4 - (padded.length % 4)) % 4;
+    const json = Buffer.from(padded + "=".repeat(pad), "base64").toString("utf8");
+    const parsed: unknown = JSON.parse(json);
+    return typeof parsed === "object" && parsed !== null ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+function isExpiredJwtPayload(payload: Record<string, unknown>): boolean {
+  const exp = payload["exp"];
+  return typeof exp === "number" && exp * 1000 < Date.now();
 }
 
 /**
@@ -195,12 +256,27 @@ export function scanForSecrets(text: string): SecretHit[] {
       if (pat.id === "google-api-key" && isFirebaseWebConfigContext(text, m.index ?? 0, matched.length)) {
         continue;
       }
+
+      let label = pat.label;
+
+      if (pat.id === "generic-password-assign") {
+        const value = m[1] ?? matched;
+        if (shannonEntropyBitsPerChar(value) < MIN_PASSWORD_ENTROPY_BITS_PER_CHAR) continue;
+      }
+
+      if (pat.id === "jwt") {
+        const payload = decodeJwtPayload(matched);
+        if (!payload) continue; // dot-separated but not real base64url JSON — not a JWT
+        if (isExpiredJwtPayload(payload)) label = `${pat.label} (expired)`;
+      }
+
       hits.push({
         patternId: pat.id,
-        label: pat.label,
+        label,
         index: m.index ?? 0,
         length: matched.length,
         preview: redact(matched),
+        valueHash: hashValue(matched),
       });
     }
   }

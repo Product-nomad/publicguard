@@ -56,6 +56,7 @@ export interface ScanSummary {
   filesInspected: number;
   newFindings: number;
   skippedDuplicates: number;
+  skippedDuplicateValue: number;
   // Suppression breakdown — for tuning
   suppressedByRepo: number;
   suppressedByPath: number;
@@ -83,6 +84,7 @@ export async function runScan(
     filesInspected: 0,
     newFindings: 0,
     skippedDuplicates: 0,
+    skippedDuplicateValue: 0,
     suppressedByRepo: 0,
     suppressedByPath: 0,
     suppressedNoContent: 0,
@@ -186,6 +188,14 @@ export async function runScan(
       }
 
       for (const hit of hits) {
+        // Same secret already reported elsewhere in this repo (e.g. copied into
+        // several files) — one finding per credential, not one per occurrence.
+        if (db.hasValueHashForRepo(result.repo, hit.valueHash)) {
+          summary.skippedDuplicateValue++;
+          vlog(`  [dup-value]  ${result.repo}/${result.filePath} — ${hit.label} (already reported in this repo)`);
+          continue;
+        }
+
         const id = db.insertFinding({
           repo: result.repo,
           repoOwner: result.repoOwner,
@@ -195,7 +205,9 @@ export async function runScan(
           detectorId: hit.patternId,
           detectorLabel: hit.label,
           lineNumber: hit.lineNumber,
+          matchIndex: hit.index,
           preview: hit.preview,
+          valueHash: hit.valueHash,
           foundAt: new Date().toISOString(),
         });
         if (id !== null) {

@@ -17,25 +17,7 @@ export class DB {
 
   private migrate(): void {
     this.db.exec(`
-      CREATE TABLE IF NOT EXISTS findings (
-        id           INTEGER PRIMARY KEY AUTOINCREMENT,
-        repo         TEXT NOT NULL,
-        repo_owner   TEXT NOT NULL,
-        repo_name    TEXT NOT NULL,
-        file_path    TEXT NOT NULL,
-        commit_sha   TEXT NOT NULL,
-        detector_id  TEXT NOT NULL,
-        detector_label TEXT NOT NULL,
-        line_number  INTEGER,
-        preview      TEXT,
-        found_at     TEXT NOT NULL,
-        status       TEXT NOT NULL DEFAULT 'pending',
-        issue_url    TEXT,
-        issue_number INTEGER,
-        posted_at    TEXT,
-        last_comment_count INTEGER NOT NULL DEFAULT 0,
-        UNIQUE(repo, file_path, commit_sha, detector_id)
-      );
+      ${findingsTableSql("findings")}
 
       CREATE TABLE IF NOT EXISTS daily_log (
         date  TEXT PRIMARY KEY,
@@ -61,6 +43,7 @@ export class DB {
     // CREATE TABLE IF NOT EXISTS above is a no-op on an already-existing table.
     this.addColumnIfMissing("findings", "preview", "TEXT");
     this.addColumnIfMissing("findings", "last_comment_count", "INTEGER NOT NULL DEFAULT 0");
+    this.migrateUniqueConstraint();
 
     this.db.prepare(`
       INSERT OR IGNORE INTO config (key, value) VALUES ('mode', 'shadow')
@@ -79,10 +62,10 @@ export class DB {
     const stmt = this.db.prepare(`
       INSERT OR IGNORE INTO findings
         (repo, repo_owner, repo_name, file_path, commit_sha,
-         detector_id, detector_label, line_number, preview, found_at)
+         detector_id, detector_label, line_number, match_index, preview, value_hash, found_at)
       VALUES
         (@repo, @repoOwner, @repoName, @filePath, @commitSha,
-         @detectorId, @detectorLabel, @lineNumber, @preview, @foundAt)
+         @detectorId, @detectorLabel, @lineNumber, @matchIndex, @preview, @valueHash, @foundAt)
     `);
     const result = stmt.run({
       repo: finding.repo,
@@ -93,7 +76,9 @@ export class DB {
       detectorId: finding.detectorId,
       detectorLabel: finding.detectorLabel,
       lineNumber: finding.lineNumber ?? null,
+      matchIndex: finding.matchIndex,
       preview: finding.preview ?? null,
+      valueHash: finding.valueHash,
       foundAt: finding.foundAt,
     });
     return result.changes > 0 ? Number(result.lastInsertRowid) : null;
@@ -276,6 +261,77 @@ export class DB {
       this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
     }
   }
+
+  /**
+   * The original UNIQUE constraint was (repo, file_path, commit_sha,
+   * detector_id) — it doesn't identify *which* match within the file, so a
+   * second distinct secret of the same detector type in the same file+commit
+   * silently collided with the first and was dropped as a "duplicate" (it
+   * wasn't). Fixed by adding match_index to the key. SQLite can't ALTER a
+   * UNIQUE constraint in place, so this rebuilds the table when an
+   * older schema is detected; no-op once migrated.
+   */
+  private migrateUniqueConstraint(): void {
+    this.addColumnIfMissing("findings", "match_index", "INTEGER NOT NULL DEFAULT 0");
+    this.addColumnIfMissing("findings", "value_hash", "TEXT NOT NULL DEFAULT ''");
+
+    const row = this.db
+      .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'findings'")
+      .get() as { sql: string } | undefined;
+    // Check the UNIQUE constraint specifically, not just column presence —
+    // addColumnIfMissing above already added match_index as a plain column,
+    // which would otherwise make this look "migrated" one statement too early.
+    if (!row || row.sql.includes("detector_id, match_index)")) return; // already on the new schema
+
+    this.db.exec(`
+      ALTER TABLE findings RENAME TO findings_old;
+      ${findingsTableSql("findings")}
+      INSERT INTO findings
+        (id, repo, repo_owner, repo_name, file_path, commit_sha, detector_id,
+         detector_label, line_number, match_index, preview, value_hash, found_at,
+         status, issue_url, issue_number, posted_at, last_comment_count)
+      SELECT
+        id, repo, repo_owner, repo_name, file_path, commit_sha, detector_id,
+        detector_label, line_number, match_index, preview, value_hash, found_at,
+        status, issue_url, issue_number, posted_at, last_comment_count
+      FROM findings_old;
+      DROP TABLE findings_old;
+    `);
+  }
+
+  /** Does any finding in this repo already carry this exact secret value's hash? */
+  hasValueHashForRepo(repo: string, valueHash: string): boolean {
+    const row = this.db
+      .prepare("SELECT 1 FROM findings WHERE repo = ? AND value_hash = ?")
+      .get(repo, valueHash);
+    return row !== undefined;
+  }
+}
+
+function findingsTableSql(tableName: string): string {
+  return `
+    CREATE TABLE IF NOT EXISTS ${tableName} (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      repo         TEXT NOT NULL,
+      repo_owner   TEXT NOT NULL,
+      repo_name    TEXT NOT NULL,
+      file_path    TEXT NOT NULL,
+      commit_sha   TEXT NOT NULL,
+      detector_id  TEXT NOT NULL,
+      detector_label TEXT NOT NULL,
+      line_number  INTEGER,
+      match_index  INTEGER NOT NULL DEFAULT 0,
+      preview      TEXT,
+      value_hash   TEXT NOT NULL DEFAULT '',
+      found_at     TEXT NOT NULL,
+      status       TEXT NOT NULL DEFAULT 'pending',
+      issue_url    TEXT,
+      issue_number INTEGER,
+      posted_at    TEXT,
+      last_comment_count INTEGER NOT NULL DEFAULT 0,
+      UNIQUE(repo, file_path, commit_sha, detector_id, match_index)
+    );
+  `;
 }
 
 function todayDate(): string {
@@ -292,7 +348,9 @@ interface DbRow {
   detector_id: string;
   detector_label: string;
   line_number: number | null;
+  match_index: number;
   preview: string | null;
+  value_hash: string;
   found_at: string;
   status: string;
   issue_url: string | null;
@@ -312,7 +370,9 @@ function rowToFinding(r: DbRow): QueuedFinding {
     detectorId: r.detector_id,
     detectorLabel: r.detector_label,
     lineNumber: r.line_number,
+    matchIndex: r.match_index,
     preview: r.preview,
+    valueHash: r.value_hash,
     foundAt: r.found_at,
     status: r.status as FindingStatus,
     issueUrl: r.issue_url,

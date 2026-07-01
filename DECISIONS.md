@@ -16,6 +16,8 @@ Calling a found API key to confirm it's live would be unauthorized use of someon
 
 Only metadata is written to the local database: repo, file path, commit SHA, detector type, timestamp. The raw match is never persisted. This removes any "did you access my account" ambiguity and matches the local-only ethos of SessionGuard.
 
+One addition: a SHA-256 hash of the raw match (`value_hash`) is now stored, to recognize when the same credential shows up in more than one file in the same repo and avoid opening a separate issue for each occurrence. A one-way hash can't be reversed to recover the credential and can't be used to authenticate anywhere, so it doesn't reopen the "did you access my account" question — it's a fingerprint, not the value.
+
 ## Daily cap + kill switch, permanent
 
 The daily cap and kill switch are baked into the posting path from day one and are not removable by a mode flag. Even at full autonomy the cap applies. The blast radius of any future bug in the detector or template is bounded to one day's worth of posts before a human notices.
