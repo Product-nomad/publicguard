@@ -4,6 +4,10 @@ import { GitHubSearchClient } from "./github-search.js";
 import { SEED_QUERIES } from "./seeds.js";
 import type { SeedQuery } from "./types.js";
 
+function isKillSwitchActive(db: DB): boolean {
+  return !!process.env["PUBLICGUARD_PAUSE"] || db.isPaused();
+}
+
 export interface ScanOptions {
   /** Results to fetch per seed query. Default 10. Max 30. */
   perQuery?: number;
@@ -37,7 +41,16 @@ export async function runScan(
     rateLimitHit: false,
   };
 
+  if (isKillSwitchActive(db)) {
+    log("Kill switch active — scan aborted.");
+    return summary;
+  }
+
   for (const query of queries) {
+    if (isKillSwitchActive(db)) {
+      log("Kill switch activated mid-scan — stopping.");
+      break;
+    }
     log(`Searching: ${query.label} …`);
     let results;
     try {

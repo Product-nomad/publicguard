@@ -3,13 +3,22 @@ import type { QueuedFinding } from "./types.js";
 const GIT_HISTORY_HOWTO =
   "https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository";
 
+/**
+ * Human-readable label for use in issue text. Strips internal annotation
+ * suffixes like "(assignment)" that are meaningful in code but odd in prose.
+ */
+function friendlyLabel(detectorLabel: string): string {
+  return detectorLabel.replace(/\s*\(.*?\)\s*$/, "").trim();
+}
+
 export function renderIssueTitle(_finding: QueuedFinding): string {
   return "Possible exposed credential in this repo";
 }
 
 export function renderIssueBody(finding: QueuedFinding): string {
   const fileRef = `\`${finding.filePath}\` (commit \`${finding.commitSha.slice(0, 7)}\`)`;
-  return `Hi — while doing some public-good scanning for exposed secrets in public repos, I think I spotted a live-looking ${finding.detectorLabel} in ${fileRef}.
+  const label = friendlyLabel(finding.detectorLabel);
+  return `Hi — while doing some public-good scanning for exposed secrets in public repos, I think I spotted a live-looking ${label} in ${fileRef}.
 
 I haven't accessed, tested, or used it, and I'm not going to.
 

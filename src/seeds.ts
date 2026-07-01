@@ -26,7 +26,9 @@ export const SEED_QUERIES: SeedQuery[] = [
   {
     id: "openssh-key",
     label: "OpenSSH private key committed",
-    q: "BEGIN OPENSSH PRIVATE KEY in:file",
+    // filename: filters to common private-key filenames, avoiding tutorial repos
+    // and README files that show example key headers.
+    q: "BEGIN OPENSSH PRIVATE KEY in:file filename:id_rsa OR filename:id_ed25519 OR filename:id_ecdsa OR filename:.pem",
   },
   {
     id: "google-api-env",
