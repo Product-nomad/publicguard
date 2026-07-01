@@ -27,6 +27,7 @@ const FP_PATH_FRAGMENTS = [
   ".env.local.example",
   ".env.fake",
   ".fake",
+  ".md",
   ".env.schema",
   ".env.dist",
   ".env.default",

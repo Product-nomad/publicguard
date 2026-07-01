@@ -17,8 +17,8 @@ export interface PostSummary {
 }
 
 /**
- * Post approved findings as GitHub Issues.
- * Respects all runtime guardrails — safe to call even from a cron job.
+ * Post approved findings as GitHub Issues, one issue per (repo, file) group.
+ * Multiple detectors firing on the same file are consolidated into one issue.
  */
 export async function postApproved(
   db: DB,
@@ -39,7 +39,14 @@ export async function postApproved(
     return summary;
   }
 
-  for (const finding of approved) {
+  // Group by (repo, filePath) — one issue per file.
+  const groups = groupByFile(approved);
+  log(`${groups.length} file group(s) to post across ${countRepos(groups)} repo(s).`);
+
+  for (const group of groups) {
+    const first = group[0];
+    if (!first) continue;
+
     const guard = checkGuardrails(db);
     if (!guard.allowed) {
       summary.blocked = guard.reason ?? "Guardrail blocked posting";
@@ -48,28 +55,31 @@ export async function postApproved(
     }
 
     summary.attempted++;
+
     if (opts.dryRun) {
-      log(formatDryRun(finding));
+      log(formatDryRun(group));
       summary.skipped++;
       continue;
     }
 
     try {
-      const title = renderIssueTitle(finding);
-      const body = renderIssueBody(finding);
+      const title = renderIssueTitle(group);
+      const body = renderIssueBody(group);
       const result = await client.createIssue(
-        finding.repoOwner,
-        finding.repoName,
+        first.repoOwner,
+        first.repoName,
         title,
         body,
       );
-      db.markPosted(finding.id, result.url, result.number);
+      for (const finding of group) {
+        db.markPosted(finding.id, result.url, result.number);
+      }
       db.incrementPostCount();
       summary.posted++;
-      log(`  Posted: ${result.url}`);
+      log(`  Posted #${result.number}: ${result.url}`);
       await sleep(3000);
     } catch (err) {
-      log(`  Error posting to ${finding.repo}: ${String(err)}`);
+      log(`  Error posting to ${first.repo}: ${String(err)}`);
       summary.skipped++;
     }
   }
@@ -77,17 +87,37 @@ export async function postApproved(
   return summary;
 }
 
-function formatDryRun(finding: QueuedFinding): string {
+function groupByFile(findings: QueuedFinding[]): QueuedFinding[][] {
+  const map = new Map<string, QueuedFinding[]>();
+  for (const f of findings) {
+    const key = `${f.repo}::${f.filePath}`;
+    const group = map.get(key) ?? [];
+    group.push(f);
+    map.set(key, group);
+  }
+  return [...map.values()];
+}
+
+function countRepos(groups: QueuedFinding[][]): number {
+  return new Set(groups.map((g) => g[0]?.repo).filter(Boolean)).size;
+}
+
+function formatDryRun(group: QueuedFinding[]): string {
+  const first = group[0];
+  if (!first) return "";
+  const labels = [...new Set(group.map((f) => f.detectorLabel))];
   return [
-    `[DRY RUN] Would post to: ${finding.repo}`,
-    `  File:     ${finding.filePath}`,
-    `  Detector: ${finding.detectorLabel}`,
-    `  Commit:   ${finding.commitSha.slice(0, 7)}`,
-    `  Title:    ${renderIssueTitle(finding)}`,
-    `  Body:\n${renderIssueBody(finding)
+    `[DRY RUN] Would post to: ${first.repo}`,
+    `  File:        ${first.filePath}`,
+    `  Credentials: ${labels.join(", ")}`,
+    `  Commit:      ${first.commitSha.slice(0, 7)}`,
+    `  Body preview:`,
+    renderIssueBody(group)
       .split("\n")
+      .slice(0, 6)
       .map((l) => `    ${l}`)
-      .join("\n")}`,
+      .join("\n"),
+    "    …",
   ].join("\n");
 }
 

@@ -29,6 +29,13 @@ const FP_REPO_NAME_FRAGMENTS = [
   "exercise",
   "workshop",
   "playground",
+  "ctf",
+  "tryhackme",
+  "hackthebox",
+  "offsec",
+  "pentest",
+  "wargame",
+  "challenge",
 ];
 
 function isFalsePositiveRepo(repoName: string): boolean {
