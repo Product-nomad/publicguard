@@ -40,6 +40,13 @@ function getDbPath(): string {
   return process.env["PUBLICGUARD_DB_PATH"] ?? resolve(process.cwd(), "data/publicguard.db");
 }
 
+function parseFlag(flags: string[], name: string): number | null {
+  const i = flags.indexOf(name);
+  if (i < 0 || i + 1 >= flags.length) return null;
+  const val = parseInt(flags[i + 1] ?? "", 10);
+  return Number.isNaN(val) ? null : val;
+}
+
 function die(msg: string): never {
   console.error(`Error: ${msg}`);
   process.exit(1);
@@ -55,7 +62,7 @@ const [, , command, ...args] = process.argv;
 
 switch (command) {
   case "scan":
-    await cmdScan();
+    await cmdScan(args);
     break;
   case "review":
     await cmdReview();
@@ -82,7 +89,7 @@ switch (command) {
     cmdExclude(args);
     break;
   case "run":
-    await cmdRun();
+    await cmdRun(args);
     break;
   case "schedule":
     await cmdSchedule(args);
@@ -103,25 +110,41 @@ switch (command) {
 // Commands
 // ---------------------------------------------------------------------------
 
-async function cmdScan(): Promise<void> {
+async function cmdScan(flags: string[]): Promise<void> {
   const token = requireToken();
   const db = new DB(getDbPath());
   const client = new GitHubSearchClient(token);
+  const verbose = flags.includes("--verbose") || flags.includes("-v");
+  const perQuery = parseFlag(flags, "--per-query") ?? 10;
 
-  console.log("Running scan …");
+  console.log(`Running scan … (${perQuery}/query${verbose ? ", verbose" : ""})`);
   const summary = await runScan(db, client, {
+    verbose,
+    perQuery,
     onProgress: (msg) => console.log(msg),
   });
 
+  const total = summary.filesSearched;
+  const inspected = summary.filesInspected;
+  const suppressed = total - inspected +
+    summary.suppressedNoContent + summary.suppressedNoHits;
+
   console.log(`
 Scan complete:
-  Queries run:        ${summary.queriesRun}
-  Files inspected:    ${summary.filesInspected}
-  New findings:       ${summary.newFindings}
-  Duplicates skipped: ${summary.skippedDuplicates}
-  Excluded/ignored:   ${summary.skippedExcluded}
-  ${summary.rateLimitHit ? "Warning: rate limit hit — run again later" : ""}
-  `);
+  Queries run:      ${summary.queriesRun}
+  Files searched:   ${total}
+  Files inspected:  ${inspected}  (after repo/path filters)
+  New findings:     ${summary.newFindings}
+  Duplicates:       ${summary.skippedDuplicates}
+
+Suppression breakdown:
+  fp-repo:          ${summary.suppressedByRepo}   (repo name suggests non-production)
+  fp-path:          ${summary.suppressedByPath}   (file path is test/example/docs/etc)
+  no-content:       ${summary.suppressedNoContent}   (file deleted since search index built)
+  no-hits:          ${summary.suppressedNoHits}   (fetched OK, detector found nothing)
+  excluded/ignored: ${summary.suppressedExcluded}
+  ${summary.rateLimitHit ? "\nWarning: rate limit hit — run again later" : ""}
+`);
   db.close();
 }
 
@@ -286,21 +309,25 @@ function cmdCap(capStr: string | undefined): void {
   db.close();
 }
 
-async function cmdRun(): Promise<void> {
+async function cmdRun(flags: string[] = []): Promise<void> {
   const token = requireToken();
   const db = new DB(getDbPath());
   const client = new GitHubSearchClient(token);
   const mode = db.getMode();
+  const verbose = flags.includes("--verbose") || flags.includes("-v");
+  const perQuery = parseFlag(flags, "--per-query") ?? 10;
   const ts = new Date().toISOString();
 
   console.log(`[${ts}] publicguard run — mode: ${mode}`);
 
   // --- Scan ---
   const scanSummary = await runScan(db, client, {
+    verbose,
+    perQuery,
     onProgress: (msg) => console.log(msg),
   });
   console.log(
-    `Scan: ${scanSummary.newFindings} new, ${scanSummary.skippedDuplicates} dup, ${scanSummary.skippedExcluded} excluded`,
+    `Scan: ${scanSummary.newFindings} new, ${scanSummary.skippedDuplicates} dup, ${scanSummary.suppressedExcluded} excluded`,
   );
 
   if (mode === "shadow") {

@@ -24,8 +24,8 @@ export const SECRET_PATTERNS: SecretPattern[] = [
       /\b(aws_secret_access_key|AWS_SECRET_ACCESS_KEY)\s*[=:]\s*["']?([A-Za-z0-9/+=]{40})["']?/g,
   },
   {
-    id: "gcp-service-account",
-    label: "GCP Service Account private key",
+    id: "rsa-ec-private-key",
+    label: "RSA/EC private key",
     regex: /-----BEGIN (?:RSA |EC )?PRIVATE KEY-----/g,
   },
   {

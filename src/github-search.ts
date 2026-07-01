@@ -1,7 +1,7 @@
 import type { SearchResult, SeedQuery } from "./types.js";
 
 const GITHUB_API = "https://api.github.com";
-const RESULTS_PER_PAGE = 10;
+const MAX_RESULTS_PER_PAGE = 100;
 
 export class GitHubSearchClient {
   private readonly token: string;
@@ -25,7 +25,7 @@ export class GitHubSearchClient {
   async searchCode(query: SeedQuery, limit = 10): Promise<SearchResult[]> {
     const params = new URLSearchParams({
       q: query.q,
-      per_page: String(Math.min(limit, RESULTS_PER_PAGE)),
+      per_page: String(Math.min(limit, MAX_RESULTS_PER_PAGE)),
     });
     const url = `${GITHUB_API}/search/code?${params.toString()}`;
 

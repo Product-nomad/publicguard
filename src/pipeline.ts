@@ -1,4 +1,4 @@
-import { detectSecrets } from "./detect.js";
+import { detectSecrets, isFalsePositivePath } from "./detect.js";
 import type { DB } from "./db.js";
 import { ExclusionList } from "./exclusions.js";
 import { GitHubSearchClient } from "./github-search.js";
@@ -23,6 +23,12 @@ const FP_REPO_NAME_FRAGMENTS = [
   "template",
   "starter",
   "scaffold",
+  "learn",
+  "course",
+  "practice",
+  "exercise",
+  "workshop",
+  "playground",
 ];
 
 function isFalsePositiveRepo(repoName: string): boolean {
@@ -31,19 +37,24 @@ function isFalsePositiveRepo(repoName: string): boolean {
 }
 
 export interface ScanOptions {
-  /** Results to fetch per seed query. Default 10. Max 30. */
   perQuery?: number;
-  /** Override the seed query list (useful for testing). */
   queries?: SeedQuery[];
+  verbose?: boolean;
   onProgress?: (msg: string) => void;
 }
 
 export interface ScanSummary {
   queriesRun: number;
+  filesSearched: number;
   filesInspected: number;
   newFindings: number;
   skippedDuplicates: number;
-  skippedExcluded: number;
+  // Suppression breakdown — for tuning
+  suppressedByRepo: number;
+  suppressedByPath: number;
+  suppressedNoContent: number;
+  suppressedNoHits: number;
+  suppressedExcluded: number;
   rateLimitHit: boolean;
 }
 
@@ -54,15 +65,22 @@ export async function runScan(
 ): Promise<ScanSummary> {
   const queries = opts.queries ?? SEED_QUERIES;
   const perQuery = Math.min(opts.perQuery ?? 10, 30);
+  const verbose = opts.verbose ?? false;
   const log = opts.onProgress ?? (() => undefined);
+  const vlog = verbose ? log : () => undefined;
   const exclusions = new ExclusionList(db);
 
   const summary: ScanSummary = {
     queriesRun: 0,
+    filesSearched: 0,
     filesInspected: 0,
     newFindings: 0,
     skippedDuplicates: 0,
-    skippedExcluded: 0,
+    suppressedByRepo: 0,
+    suppressedByPath: 0,
+    suppressedNoContent: 0,
+    suppressedNoHits: 0,
+    suppressedExcluded: 0,
     rateLimitHit: false,
   };
 
@@ -82,45 +100,60 @@ export async function runScan(
       results = await client.searchCode(query, perQuery);
     } catch (err) {
       if (isRateLimitError(err)) {
-        log(`Rate limit hit — stopping scan early.`);
-        summary.rateLimitHit = true;
-        break;
+        const rl = err as { resetAt: Date | null; retryAfterSeconds: number | null };
+        const waitMs = rl.retryAfterSeconds
+          ? rl.retryAfterSeconds * 1000
+          : rl.resetAt
+            ? Math.max(0, rl.resetAt.getTime() - Date.now()) + 2000
+            : 65000; // default: wait 65s and retry once
+        log(`Rate limit hit — waiting ${Math.round(waitMs / 1000)}s then retrying …`);
+        await sleep(waitMs);
+        try {
+          results = await client.searchCode(query, perQuery);
+        } catch {
+          log(`Rate limit persists after wait — stopping scan early.`);
+          summary.rateLimitHit = true;
+          break;
+        }
+      } else {
+        log(`Search error (${query.id}): ${String(err)}`);
+        continue;
       }
-      log(`Search error (${query.id}): ${String(err)}`);
-      continue;
     }
     summary.queriesRun++;
-    log(`  Found ${results.length} file(s) to inspect`);
+    summary.filesSearched += results.length;
+    log(`  ${results.length} result(s)`);
 
     for (const result of results) {
-      // DB exclusion check — before any API call to the repo.
       if (exclusions.isExcluded(result.repoOwner, result.repoName)) {
-        log(`  [EXCLUDED] ${result.repo}`);
-        summary.skippedExcluded++;
+        vlog(`  [excluded]   ${result.repo}/${result.filePath}`);
+        summary.suppressedExcluded++;
         continue;
       }
 
-      // Repo-name FP filter — catches honeypot/example/demo repos where
-      // committed secrets are intentional, not accidental.
       if (isFalsePositiveRepo(result.repoName)) {
-        log(`  [FP-REPO] ${result.repo} (repo name suggests non-production)`);
-        summary.skippedExcluded++;
+        vlog(`  [fp-repo]    ${result.repo} (repo name: ${result.repoName})`);
+        summary.suppressedByRepo++;
+        continue;
+      }
+
+      if (isFalsePositivePath(result.filePath)) {
+        vlog(`  [fp-path]    ${result.repo}/${result.filePath}`);
+        summary.suppressedByPath++;
         continue;
       }
 
       summary.filesInspected++;
 
-      // .publicguard-ignore file check — one HEAD request, cached per repo.
       const ignored = await client.fileExists(
         result.repoOwner,
         result.repoName,
         ".publicguard-ignore",
       );
       if (ignored) {
-        log(`  [IGNORED] ${result.repo} (.publicguard-ignore present)`);
-        summary.skippedExcluded++;
-        // Auto-add to DB so we don't check again next run.
-        exclusions.add("repo", result.repo, "auto: .publicguard-ignore file detected");
+        log(`  [ignored]    ${result.repo} (.publicguard-ignore)`);
+        summary.suppressedExcluded++;
+        exclusions.add("repo", result.repo, "auto: .publicguard-ignore detected");
         continue;
       }
 
@@ -131,9 +164,20 @@ export async function runScan(
         result.commitSha,
       );
 
-      if (!content) continue;
+      if (!content) {
+        vlog(`  [no-content] ${result.repo}/${result.filePath} (deleted or inaccessible)`);
+        summary.suppressedNoContent++;
+        continue;
+      }
 
       const hits = detectSecrets(content, result.filePath);
+
+      if (hits.length === 0) {
+        vlog(`  [no-hits]    ${result.repo}/${result.filePath}`);
+        summary.suppressedNoHits++;
+        continue;
+      }
+
       for (const hit of hits) {
         const id = db.insertFinding({
           repo: result.repo,
@@ -148,18 +192,19 @@ export async function runScan(
         });
         if (id !== null) {
           summary.newFindings++;
-          log(
-            `  [NEW] ${result.repo} ${result.filePath} — ${hit.label} (preview: ${hit.preview})`,
-          );
+          log(`  [NEW]        ${result.repo}/${result.filePath} — ${hit.label}`);
         } else {
           summary.skippedDuplicates++;
+          vlog(`  [dup]        ${result.repo}/${result.filePath} — ${hit.label}`);
         }
       }
 
       await sleep(500);
     }
 
-    await sleep(2000);
+    // GitHub Code Search rate limit: 10 req/min authenticated = 1 per 6s.
+    // 8s gives a 25% margin; file-content fetches use the separate REST budget.
+    await sleep(8000);
   }
 
   return summary;
