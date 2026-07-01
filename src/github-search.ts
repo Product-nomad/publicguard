@@ -53,7 +53,7 @@ export class GitHubSearchClient {
         repoOwner: item.repository.owner.login,
         repoName: item.repository.name,
         filePath: item.path,
-        commitSha: item.sha,
+        commitSha: commitShaFromUrl(item.html_url) ?? item.sha,
         fileUrl: item.html_url,
         rawContent: "",
       });
@@ -136,6 +136,24 @@ export class RateLimitError extends Error {
     this.statusCode = statusCode;
     this.retryAfterSeconds = waitSec;
     this.resetAt = resetDate;
+  }
+}
+
+/**
+ * Extract the commit SHA from a GitHub blob URL.
+ * Format: https://github.com/owner/repo/blob/{commit_sha}/{path}
+ * item.sha is the blob SHA (file content hash), not the commit SHA.
+ * The Contents API ref parameter requires a branch name, tag, or commit SHA —
+ * not a blob SHA — so we parse the real commit SHA from html_url.
+ */
+function commitShaFromUrl(htmlUrl: string): string | null {
+  try {
+    const parts = new URL(htmlUrl).pathname.split("/");
+    // ['', 'owner', 'repo', 'blob', '{commit_sha}', ...path]
+    const sha = parts[4];
+    return sha && /^[0-9a-f]{40}$/i.test(sha) ? sha : null;
+  } catch {
+    return null;
   }
 }
 
