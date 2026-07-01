@@ -39,5 +39,5 @@ I haven't accessed, tested, or used it, and I'm not going to.
 No action needed from me — feel free to close this issue once handled.
 
 ---
-*Flagged by [PublicGuard](https://github.com/productnomad/publicguard), an open, non-commercial scan run as part of my security tooling work (companion to [SessionGuard](https://sessionguard.dev)). Happy to answer questions, no strings attached.*`;
+*Flagged by [PublicGuard](https://github.com/Product-nomad/publicguard), an open, non-commercial scan run as part of my security tooling work (companion to [SessionGuard](https://sessionguard.dev)). Happy to answer questions, no strings attached.*`;
 }

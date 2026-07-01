@@ -13,7 +13,7 @@
 
 set -euo pipefail
 
-OWNER="productnomad"
+OWNER="Product-nomad"
 REPO="publicguard"
 DESCRIPTION="Good-faith secret-leak notifier for public GitHub repos — finds exposed credentials, tells owners privately, no shaming, no sales pitch."
 API="https://api.github.com"
