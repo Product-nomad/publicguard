@@ -29,7 +29,7 @@ describe("isFalsePositivePath", () => {
 
 describe("detectSecrets", () => {
   it("finds AWS key in content", () => {
-    const content = "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n";
+    const content = "AWS_ACCESS_KEY_ID=AKIAJ3LXMXPGC5XSH2TQ\n";
     const hits = detectSecrets(content, ".env");
     assert.ok(hits.length > 0, "should find AWS key");
     assert.ok(hits.some((h) => h.patternId === "aws-access-key"));
@@ -60,15 +60,21 @@ describe("detectSecrets", () => {
   });
 
   it("includes correct line number", () => {
-    const content = "FOO=bar\nAWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\nBAZ=qux\n";
+    const content = "FOO=bar\nAWS_ACCESS_KEY_ID=AKIAJ3LXMXPGC5XSH2TQ\nBAZ=qux\n";
     const hits = detectSecrets(content, ".env");
     const awsHit = hits.find((h) => h.patternId === "aws-access-key");
     assert.ok(awsHit, "should find AWS key");
     assert.equal(awsHit.lineNumber, 2);
   });
 
+  it("suppresses the AWS documentation example key", () => {
+    const content = "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n";
+    const hits = detectSecrets(content, ".env");
+    assert.equal(hits.length, 0, "doc example key must be filtered as placeholder");
+  });
+
   it("does not store or expose the raw secret value", () => {
-    const key = "AKIAIOSFODNN7EXAMPLE";
+    const key = "AKIAJ3LXMXPGC5XSH2TQ";
     const content = `AWS_ACCESS_KEY_ID=${key}\n`;
     const hits = detectSecrets(content, ".env");
     assert.ok(hits.length > 0);

@@ -207,6 +207,13 @@ export class DB {
     this.setConfig("daily_cap", String(cap));
   }
 
+  autoApprove(): number {
+    const result = this.db
+      .prepare("UPDATE findings SET status = 'approved' WHERE status = 'pending'")
+      .run();
+    return result.changes;
+  }
+
   ensureExclusionsTable(): void {
     // Table is created in migrate(); this is a no-op hook for ExclusionList.
   }

@@ -105,6 +105,26 @@ export function redact(match: string): string {
   return `${match.slice(0, 4)}…${match.slice(-4)}`;
 }
 
+/**
+ * Matches that look structurally valid but are clearly demo/placeholder values.
+ * Applied to the raw match body (post-prefix) so that pattern-specific prefixes
+ * like AKIA, sk_live_, ghp_ don't themselves trip the checks.
+ */
+const PLACEHOLDER_PATTERNS: RegExp[] = [
+  /EXAMPLE/i,
+  /PLACEHOLDER/i,
+  /YOUR[_-]?(?:API[_-]?)?(?:KEY|SECRET|TOKEN)/i,
+  /INSERT[_-]?HERE/i,
+  /REPLACE[_-]?ME/i,
+  /CHANGEME/i,
+  /^(.)\1{9,}$/,       // 10+ of the same character (XXXXXXXXXX, 0000000000, etc.)
+  /^[A-Za-z]{1,4}1234/, // followed immediately by ascending digits — common in docs
+];
+
+function isPlaceholder(match: string): boolean {
+  return PLACEHOLDER_PATTERNS.some((re) => re.test(match));
+}
+
 export function scanForSecrets(text: string): SecretHit[] {
   const hits: SecretHit[] = [];
   for (const pat of SECRET_PATTERNS) {
@@ -112,6 +132,7 @@ export function scanForSecrets(text: string): SecretHit[] {
     for (const m of text.matchAll(pat.regex)) {
       const matched = m[0];
       if (pat.minMatchLen && matched.length < pat.minMatchLen) continue;
+      if (isPlaceholder(matched)) continue;
       hits.push({
         patternId: pat.id,
         label: pat.label,
