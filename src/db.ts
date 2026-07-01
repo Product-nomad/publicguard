@@ -91,15 +91,15 @@ export class DB {
   }
 
   getByStatus(status: FindingStatus): QueuedFinding[] {
-    return this.db
+    const rows = this.db
       .prepare("SELECT * FROM findings WHERE status = ? ORDER BY found_at ASC")
-      .all(status) as QueuedFinding[];
+      .all(status) as DbRow[];
+    return rows.map(rowToFinding);
   }
 
   getById(id: number): QueuedFinding | null {
-    return (
-      (this.db.prepare("SELECT * FROM findings WHERE id = ?").get(id) as QueuedFinding | undefined) ?? null
-    );
+    const row = this.db.prepare("SELECT * FROM findings WHERE id = ?").get(id) as DbRow | undefined;
+    return row ? rowToFinding(row) : null;
   }
 
   updateStatus(id: number, status: FindingStatus): void {
@@ -249,4 +249,40 @@ export class DB {
 
 function todayDate(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+interface DbRow {
+  id: number;
+  repo: string;
+  repo_owner: string;
+  repo_name: string;
+  file_path: string;
+  commit_sha: string;
+  detector_id: string;
+  detector_label: string;
+  line_number: number | null;
+  found_at: string;
+  status: string;
+  issue_url: string | null;
+  issue_number: number | null;
+  posted_at: string | null;
+}
+
+function rowToFinding(r: DbRow): QueuedFinding {
+  return {
+    id: r.id,
+    repo: r.repo,
+    repoOwner: r.repo_owner,
+    repoName: r.repo_name,
+    filePath: r.file_path,
+    commitSha: r.commit_sha,
+    detectorId: r.detector_id,
+    detectorLabel: r.detector_label,
+    lineNumber: r.line_number,
+    foundAt: r.found_at,
+    status: r.status as FindingStatus,
+    issueUrl: r.issue_url,
+    issueNumber: r.issue_number,
+    postedAt: r.posted_at,
+  };
 }
