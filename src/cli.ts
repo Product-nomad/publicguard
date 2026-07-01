@@ -9,6 +9,7 @@ import { GitHubSearchClient } from "./github-search.js";
 import { runScan } from "./pipeline.js";
 import { postApproved } from "./poster.js";
 import type { ExclusionKind, RunMode } from "./types.js";
+import { checkPostedIssuesForReplies } from "./watch.js";
 
 // ---------------------------------------------------------------------------
 // Config / env
@@ -69,6 +70,9 @@ switch (command) {
     break;
   case "post":
     await cmdPost(args);
+    break;
+  case "check-replies":
+    await cmdCheckReplies();
     break;
   case "status":
     await cmdStatus();
@@ -171,6 +175,7 @@ async function cmdReview(): Promise<void> {
     console.log(`Detector: ${finding.detectorLabel}`);
     console.log(`Commit:   ${finding.commitSha.slice(0, 7)}`);
     if (finding.lineNumber) console.log(`Line:     ${finding.lineNumber}`);
+    if (finding.preview) console.log(`Preview:  ${finding.preview}`);
     console.log(`Found:    ${finding.foundAt}`);
 
     const answer = await ask("\n[a]pprove / [s]kip / [q]uit? ");
@@ -213,6 +218,23 @@ async function cmdPost(flags: string[]): Promise<void> {
   Skipped:   ${summary.skipped}
   ${summary.blocked ? `Blocked:   ${summary.blocked}` : ""}
   `);
+  db.close();
+}
+
+async function cmdCheckReplies(): Promise<void> {
+  const token = requireToken();
+  const db = new DB(getDbPath());
+  const client = new GitHubSearchClient(token);
+
+  const summary = await checkPostedIssuesForReplies(db, client, {
+    onProgress: (msg) => console.log(msg),
+  });
+  console.log(
+    `\nChecked ${summary.issuesChecked} posted issue(s), ${summary.newReplies} with new repl${summary.newReplies === 1 ? "y" : "ies"}.`,
+  );
+  if (summary.newReplies > 0) {
+    console.log("Posting paused — review flagged finding(s), then: publicguard resume");
+  }
   db.close();
 }
 
@@ -336,9 +358,27 @@ async function cmdRun(flags: string[] = []): Promise<void> {
     return;
   }
 
-  // --- Auto-approve ---
+  // --- Check for pushback on prior posts before adding new ones ---
+  const watchSummary = await checkPostedIssuesForReplies(db, client, {
+    onProgress: (msg) => console.log(msg),
+  });
+  if (watchSummary.newReplies > 0) {
+    console.log(
+      `Reply check: ${watchSummary.newReplies} new repl${watchSummary.newReplies === 1 ? "y" : "ies"} — posting paused, skipping auto-approve/post this run.`,
+    );
+    db.close();
+    return;
+  }
+
+  // --- Auto-approve (high-confidence detectors only) ---
   const approved = db.autoApprove();
   if (approved > 0) console.log(`Auto-approved ${approved} finding(s)`);
+  const stillPending = db.getByStatus("pending").length;
+  if (stillPending > 0) {
+    console.log(
+      `${stillPending} low-confidence finding(s) awaiting manual review — run: publicguard review`,
+    );
+  }
 
   // --- Post ---
   const postSummary = await postApproved(db, client, {
@@ -481,6 +521,7 @@ Usage:
   publicguard schedule [interval]  Install systemd user timer for 'run' (default: 6h; options: 1h 3h 6h 12h daily)
   publicguard scan              Scan only — adds findings to queue, does not post
   publicguard post [--dry-run]  Post approved findings (respects guardrails)
+  publicguard check-replies     Check posted issues for new replies; auto-pauses on any reply
   publicguard status            Show queue stats and recent posting activity
   publicguard pause             Activate kill switch — halt all activity immediately
   publicguard resume            Clear kill switch

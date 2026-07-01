@@ -1,4 +1,5 @@
 import type { DB } from "./db.js";
+import { detectSecrets } from "./detect.js";
 import { checkGuardrails } from "./guardrails.js";
 import type { GitHubSearchClient } from "./github-search.js";
 import { renderIssueBody, renderIssueTitle } from "./template.js";
@@ -62,9 +63,42 @@ export async function postApproved(
       continue;
     }
 
+    // Re-validate live, right before posting — the scan-time commit SHA can
+    // be stale by now (review/approval + daily-cap queueing can take days),
+    // and citing it can point at a commit that no longer contains the file
+    // or the credential.
+    const liveCommitSha = await client.getLatestCommitForPath(
+      first.repoOwner,
+      first.repoName,
+      first.filePath,
+    );
+    if (!liveCommitSha) {
+      log(`  Skipping ${first.repo}/${first.filePath}: file no longer exists`);
+      for (const finding of group) db.updateStatus(finding.id, "skipped");
+      summary.skipped++;
+      continue;
+    }
+
+    const liveContent = await client.fetchFileContent(
+      first.repoOwner,
+      first.repoName,
+      first.filePath,
+      liveCommitSha,
+    );
+    const liveHits = liveContent ? detectSecrets(liveContent, first.filePath) : [];
+    const stillPresent = group.some((f) => liveHits.some((h) => h.patternId === f.detectorId));
+    if (!stillPresent) {
+      log(`  Skipping ${first.repo}/${first.filePath}: credential no longer present (already rotated/removed)`);
+      for (const finding of group) db.updateStatus(finding.id, "skipped");
+      summary.skipped++;
+      continue;
+    }
+
+    const groupForRender = group.map((f) => ({ ...f, commitSha: liveCommitSha }));
+
     try {
-      const title = renderIssueTitle(group);
-      const body = renderIssueBody(group);
+      const title = renderIssueTitle(groupForRender);
+      const body = renderIssueBody(groupForRender);
       const result = await client.createIssue(
         first.repoOwner,
         first.repoName,
@@ -106,10 +140,12 @@ function formatDryRun(group: QueuedFinding[]): string {
   const first = group[0];
   if (!first) return "";
   const labels = [...new Set(group.map((f) => f.detectorLabel))];
+  const previews = [...new Set(group.map((f) => f.preview).filter((p): p is string => !!p))];
   return [
     `[DRY RUN] Would post to: ${first.repo}`,
     `  File:        ${first.filePath}`,
     `  Credentials: ${labels.join(", ")}`,
+    `  Preview:     ${previews.join(", ") || "(none)"}`,
     `  Commit:      ${first.commitSha.slice(0, 7)}`,
     `  Body preview:`,
     renderIssueBody(group)

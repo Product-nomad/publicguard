@@ -4,11 +4,22 @@
  * instead of local AI agent transcripts). Keep both in sync.
  */
 
+export type PatternConfidence = "high" | "low";
+
 export interface SecretPattern {
   id: string;
   label: string;
   regex: RegExp;
   minMatchLen?: number;
+  /**
+   * "low" marks patterns that are structurally ambiguous — the matched
+   * format has legitimate public/client-side uses (Firebase/Google web keys,
+   * ID-token JWTs, config values that merely look like passwords) so a regex
+   * match alone isn't strong evidence of a real leak. Low-confidence
+   * findings are excluded from autoApprove() and always require a human
+   * to run `publicguard review` before they can be posted.
+   */
+  confidence: PatternConfidence;
 }
 
 export const SECRET_PATTERNS: SecretPattern[] = [
@@ -16,79 +27,102 @@ export const SECRET_PATTERNS: SecretPattern[] = [
     id: "aws-access-key",
     label: "AWS Access Key ID",
     regex: /\b(AKIA|ASIA)[0-9A-Z]{16}\b/g,
+    confidence: "high",
   },
   {
     id: "aws-secret-key",
     label: "AWS Secret Access Key (assignment)",
     regex:
       /\b(aws_secret_access_key|AWS_SECRET_ACCESS_KEY)\s*[=:]\s*["']?([A-Za-z0-9/+=]{40})["']?/g,
+    confidence: "high",
   },
   {
     id: "rsa-ec-private-key",
     label: "RSA/EC private key",
     regex: /-----BEGIN (?:RSA |EC )?PRIVATE KEY-----/g,
+    confidence: "high",
   },
   {
     id: "ssh-private-key",
     label: "OpenSSH private key",
     regex: /-----BEGIN OPENSSH PRIVATE KEY-----/g,
+    confidence: "high",
   },
   {
     id: "github-token",
     label: "GitHub personal access token",
     regex: /\bghp_[A-Za-z0-9]{36}\b/g,
+    confidence: "high",
   },
   {
     id: "github-fine-grained",
     label: "GitHub fine-grained PAT",
     regex: /\bgithub_pat_[A-Za-z0-9_]{80,}\b/g,
+    confidence: "high",
   },
   {
     id: "github-oauth",
     label: "GitHub OAuth token",
     regex: /\bgho_[A-Za-z0-9]{36}\b/g,
+    confidence: "high",
   },
   {
     id: "slack-token",
     label: "Slack token",
     regex: /\bxox[aboprs]-[A-Za-z0-9-]{10,}\b/g,
+    confidence: "high",
   },
   {
     id: "stripe-live-secret",
     label: "Stripe live secret key",
     regex: /\bsk_live_[A-Za-z0-9]{20,}\b/g,
+    confidence: "high",
   },
   {
     id: "stripe-restricted",
     label: "Stripe restricted key",
     regex: /\brk_live_[A-Za-z0-9]{20,}\b/g,
+    confidence: "high",
   },
   {
     id: "anthropic-key",
     label: "Anthropic API key",
     regex: /\bsk-ant-(?:api\d{2}|admin\d{2}|oat\d{2})-[A-Za-z0-9_-]{80,}\b/g,
+    confidence: "high",
   },
   {
     id: "openai-key",
     label: "OpenAI API key",
     regex: /\bsk-(?:proj-)?[A-Za-z0-9_-]{40,}\b/g,
+    confidence: "high",
   },
   {
     id: "google-api-key",
     label: "Google API key",
     regex: /\bAIza[0-9A-Za-z_-]{35}\b/g,
+    // Same format is used for Firebase/Google Maps web config keys, which are
+    // meant to be public — access control is enforced server-side, not by
+    // secrecy of this key. Context filtering catches the obvious cases; the
+    // format is still ambiguous enough to require a human look.
+    confidence: "low",
   },
   {
     id: "jwt",
     label: "JWT",
     regex: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g,
     minMatchLen: 60,
+    // Plenty of JWTs seen in public repos are short-lived ID tokens or fixture
+    // data, not live credentials.
+    confidence: "low",
   },
   {
     id: "generic-password-assign",
     label: "password assignment",
     regex: /\b(?:password|passwd|pwd)\s*[=:]\s*["']([^"'\s]{8,})["']/gi,
     minMatchLen: 8,
+    // Free-text variable name, not a fixed credential format — high FP rate
+    // (docs, config schemas, placeholder-ish values that dodge the placeholder list).
+    confidence: "low",
   },
 ];
 
@@ -125,6 +159,31 @@ function isPlaceholder(match: string): boolean {
   return PLACEHOLDER_PATTERNS.some((re) => re.test(match));
 }
 
+/**
+ * Firebase web config API keys share the AIza… format with restricted Google
+ * API keys but are meant to be public — Firebase access control is enforced
+ * by Security Rules, not by keeping this key secret. Detect the config
+ * context around a match so we don't flag these as leaked credentials.
+ */
+const FIREBASE_CONTEXT_MARKERS = [
+  "firebaseconfig",
+  "initializeapp",
+  "authdomain",
+  "messagingsenderid",
+  "storagebucket",
+  "databaseurl",
+  "measurementid",
+  ".firebaseapp.com",
+  ".firebaseio.com",
+];
+
+function isFirebaseWebConfigContext(text: string, index: number, length: number): boolean {
+  const start = Math.max(0, index - 400);
+  const end = Math.min(text.length, index + length + 400);
+  const context = text.slice(start, end).toLowerCase();
+  return FIREBASE_CONTEXT_MARKERS.some((marker) => context.includes(marker));
+}
+
 export function scanForSecrets(text: string): SecretHit[] {
   const hits: SecretHit[] = [];
   for (const pat of SECRET_PATTERNS) {
@@ -133,6 +192,9 @@ export function scanForSecrets(text: string): SecretHit[] {
       const matched = m[0];
       if (pat.minMatchLen && matched.length < pat.minMatchLen) continue;
       if (isPlaceholder(matched)) continue;
+      if (pat.id === "google-api-key" && isFirebaseWebConfigContext(text, m.index ?? 0, matched.length)) {
+        continue;
+      }
       hits.push({
         patternId: pat.id,
         label: pat.label,

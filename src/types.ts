@@ -17,11 +17,13 @@ export interface QueuedFinding {
   detectorId: string;
   detectorLabel: string;
   lineNumber: number | null;
+  preview: string | null;
   foundAt: string;
   status: FindingStatus;
   issueUrl: string | null;
   issueNumber: number | null;
   postedAt: string | null;
+  lastCommentCount: number;
 }
 
 export interface SearchResult {

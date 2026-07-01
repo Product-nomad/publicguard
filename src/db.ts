@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { SECRET_PATTERNS } from "./patterns.js";
 import type { DailyStats, ExclusionKind, FindingStatus, QueuedFinding, RunMode } from "./types.js";
 
 export class DB {
@@ -26,11 +27,13 @@ export class DB {
         detector_id  TEXT NOT NULL,
         detector_label TEXT NOT NULL,
         line_number  INTEGER,
+        preview      TEXT,
         found_at     TEXT NOT NULL,
         status       TEXT NOT NULL DEFAULT 'pending',
         issue_url    TEXT,
         issue_number INTEGER,
         posted_at    TEXT,
+        last_comment_count INTEGER NOT NULL DEFAULT 0,
         UNIQUE(repo, file_path, commit_sha, detector_id)
       );
 
@@ -54,6 +57,11 @@ export class DB {
       );
     `);
 
+    // Additive migration for databases created before these columns existed —
+    // CREATE TABLE IF NOT EXISTS above is a no-op on an already-existing table.
+    this.addColumnIfMissing("findings", "preview", "TEXT");
+    this.addColumnIfMissing("findings", "last_comment_count", "INTEGER NOT NULL DEFAULT 0");
+
     this.db.prepare(`
       INSERT OR IGNORE INTO config (key, value) VALUES ('mode', 'shadow')
     `).run();
@@ -67,14 +75,14 @@ export class DB {
     `).run();
   }
 
-  insertFinding(finding: Omit<QueuedFinding, "id" | "status" | "issueUrl" | "issueNumber" | "postedAt">): number | null {
+  insertFinding(finding: Omit<QueuedFinding, "id" | "status" | "issueUrl" | "issueNumber" | "postedAt" | "lastCommentCount">): number | null {
     const stmt = this.db.prepare(`
       INSERT OR IGNORE INTO findings
         (repo, repo_owner, repo_name, file_path, commit_sha,
-         detector_id, detector_label, line_number, found_at)
+         detector_id, detector_label, line_number, preview, found_at)
       VALUES
         (@repo, @repoOwner, @repoName, @filePath, @commitSha,
-         @detectorId, @detectorLabel, @lineNumber, @foundAt)
+         @detectorId, @detectorLabel, @lineNumber, @preview, @foundAt)
     `);
     const result = stmt.run({
       repo: finding.repo,
@@ -85,6 +93,7 @@ export class DB {
       detectorId: finding.detectorId,
       detectorLabel: finding.detectorLabel,
       lineNumber: finding.lineNumber ?? null,
+      preview: finding.preview ?? null,
       foundAt: finding.foundAt,
     });
     return result.changes > 0 ? Number(result.lastInsertRowid) : null;
@@ -207,11 +216,26 @@ export class DB {
     this.setConfig("daily_cap", String(cap));
   }
 
+  /**
+   * Bulk-approve pending findings for auto-posting — but only for
+   * high-confidence detectors. Low-confidence patterns (ambiguous formats
+   * like Firebase/Google web keys) always require a human to approve them
+   * via `publicguard review`, regardless of run mode.
+   */
   autoApprove(): number {
+    const highConfidenceIds = SECRET_PATTERNS.filter((p) => p.confidence !== "low").map((p) => p.id);
+    if (highConfidenceIds.length === 0) return 0;
+    const placeholders = highConfidenceIds.map(() => "?").join(",");
     const result = this.db
-      .prepare("UPDATE findings SET status = 'approved' WHERE status = 'pending'")
-      .run();
+      .prepare(
+        `UPDATE findings SET status = 'approved' WHERE status = 'pending' AND detector_id IN (${placeholders})`,
+      )
+      .run(...highConfidenceIds);
     return result.changes;
+  }
+
+  setLastCommentCount(id: number, count: number): void {
+    this.db.prepare("UPDATE findings SET last_comment_count = ? WHERE id = ?").run(count, id);
   }
 
   ensureExclusionsTable(): void {
@@ -245,6 +269,13 @@ export class DB {
   close(): void {
     this.db.close();
   }
+
+  private addColumnIfMissing(table: string, column: string, type: string): void {
+    const cols = this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    if (!cols.some((c) => c.name === column)) {
+      this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+    }
+  }
 }
 
 function todayDate(): string {
@@ -261,11 +292,13 @@ interface DbRow {
   detector_id: string;
   detector_label: string;
   line_number: number | null;
+  preview: string | null;
   found_at: string;
   status: string;
   issue_url: string | null;
   issue_number: number | null;
   posted_at: string | null;
+  last_comment_count: number;
 }
 
 function rowToFinding(r: DbRow): QueuedFinding {
@@ -279,10 +312,12 @@ function rowToFinding(r: DbRow): QueuedFinding {
     detectorId: r.detector_id,
     detectorLabel: r.detector_label,
     lineNumber: r.line_number,
+    preview: r.preview,
     foundAt: r.found_at,
     status: r.status as FindingStatus,
     issueUrl: r.issue_url,
     issueNumber: r.issue_number,
     postedAt: r.posted_at,
+    lastCommentCount: r.last_comment_count,
   };
 }

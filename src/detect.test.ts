@@ -82,4 +82,25 @@ describe("detectSecrets", () => {
       assert.ok(!hit.preview.includes(key), "raw key must not appear in preview");
     }
   });
+
+  it("suppresses a Firebase web config API key", () => {
+    const content = `
+      const firebaseConfig = {
+        apiKey: "AIzaSyD-9tSrke72PouQMnMX-a7eZSW0jkFMBc0",
+        authDomain: "my-app.firebaseapp.com",
+        projectId: "my-app",
+        storageBucket: "my-app.appspot.com",
+        messagingSenderId: "123456789",
+        appId: "1:123456789:web:abcdef",
+      };
+    `;
+    const hits = detectSecrets(content, "src/firebase.ts");
+    assert.equal(hits.length, 0, "Firebase web config key is public by design");
+  });
+
+  it("still flags a bare Google API key with no Firebase context", () => {
+    const content = 'GOOGLE_MAPS_KEY="AIzaSyD-9tSrke72PouQMnMX-a7eZSW0jkFMBc0"\n';
+    const hits = detectSecrets(content, ".env");
+    assert.ok(hits.some((h) => h.patternId === "google-api-key"));
+  });
 });

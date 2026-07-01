@@ -195,6 +195,7 @@ export async function runScan(
           detectorId: hit.patternId,
           detectorLabel: hit.label,
           lineNumber: hit.lineNumber,
+          preview: hit.preview,
           foundAt: new Date().toISOString(),
         });
         if (id !== null) {

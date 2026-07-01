@@ -72,6 +72,24 @@ export class GitHubSearchClient {
   }
 
   /**
+   * Find the most recent commit that touched a given file path, on the
+   * repo's default branch. Used to re-validate a finding right before
+   * posting, since the commit SHA captured at scan time can go stale by
+   * the time a finding clears review/approval and the daily posting cap —
+   * the file may have moved on, or that old commit may no longer be
+   * reachable (e.g. after a history rewrite), even though the path still
+   * exists today.
+   */
+  async getLatestCommitForPath(owner: string, repo: string, path: string): Promise<string | null> {
+    const params = new URLSearchParams({ path, per_page: "1" });
+    const url = `${GITHUB_API}/repos/${owner}/${repo}/commits?${params.toString()}`;
+    const resp = await fetch(url, { headers: this.headers });
+    if (!resp.ok) return null;
+    const data = (await resp.json()) as Array<{ sha: string }>;
+    return data[0]?.sha ?? null;
+  }
+
+  /**
    * Fetch raw file content from a repo.
    * Returns empty string on error rather than throwing — a 404 is fine
    * (file deleted since search index was built).
@@ -88,6 +106,20 @@ export class GitHubSearchClient {
     });
     if (!resp.ok) return "";
     return resp.text();
+  }
+
+  /**
+   * Get the current comment count on a previously-posted issue. Used to
+   * detect pushback (a repo owner disputing a finding) without needing to
+   * know the bot's own account — PublicGuard never comments after opening
+   * the issue, so any comment at all is external.
+   */
+  async getIssueCommentCount(owner: string, repo: string, issueNumber: number): Promise<number> {
+    const url = `${GITHUB_API}/repos/${owner}/${repo}/issues/${issueNumber}`;
+    const resp = await fetch(url, { headers: this.headers });
+    if (!resp.ok) return 0;
+    const data = (await resp.json()) as { comments?: number };
+    return data.comments ?? 0;
   }
 
   /**
