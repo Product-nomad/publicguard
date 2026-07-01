@@ -62,6 +62,16 @@ export class GitHubSearchClient {
   }
 
   /**
+   * Check whether a file exists in a repo (HEAD request — no content downloaded).
+   * Used to check for .publicguard-ignore before fetching anything else.
+   */
+  async fileExists(owner: string, repo: string, path: string): Promise<boolean> {
+    const url = `${GITHUB_API}/repos/${owner}/${repo}/contents/${path}`;
+    const resp = await fetch(url, { method: "HEAD", headers: this.headers });
+    return resp.ok;
+  }
+
+  /**
    * Fetch raw file content from a repo.
    * Returns empty string on error rather than throwing — a 404 is fine
    * (file deleted since search index was built).

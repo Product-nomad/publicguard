@@ -49,3 +49,13 @@ export interface PostResult {
   issueUrl: string;
   issueNumber: number;
 }
+
+export type ExclusionKind = "repo" | "owner";
+
+export interface Exclusion {
+  id: number;
+  kind: ExclusionKind;
+  value: string;
+  addedAt: string;
+  note: string | null;
+}

@@ -3,10 +3,11 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { DB } from "./db.js";
+import { ExclusionList } from "./exclusions.js";
 import { GitHubSearchClient } from "./github-search.js";
 import { runScan } from "./pipeline.js";
 import { postApproved } from "./poster.js";
-import type { RunMode } from "./types.js";
+import type { ExclusionKind, RunMode } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Config / env
@@ -76,6 +77,9 @@ switch (command) {
   case "cap":
     cmdCap(args[0]);
     break;
+  case "exclude":
+    cmdExclude(args);
+    break;
   case undefined:
   case "help":
   case "--help":
@@ -108,7 +112,8 @@ Scan complete:
   Files inspected:    ${summary.filesInspected}
   New findings:       ${summary.newFindings}
   Duplicates skipped: ${summary.skippedDuplicates}
-  ${summary.rateLimitHit ? "⚠ Rate limit hit — run again later" : ""}
+  Excluded/ignored:   ${summary.skippedExcluded}
+  ${summary.rateLimitHit ? "Warning: rate limit hit — run again later" : ""}
   `);
   db.close();
 }
@@ -274,6 +279,59 @@ function cmdCap(capStr: string | undefined): void {
   db.close();
 }
 
+function cmdExclude(args: string[]): void {
+  const sub = args[0];
+  const db = new DB(getDbPath());
+  const excl = new ExclusionList(db);
+
+  if (!sub || sub === "list") {
+    const list = excl.list();
+    if (list.length === 0) {
+      console.log("No exclusions.");
+    } else {
+      console.log("Exclusions:");
+      for (const e of list) {
+        const note = e.note ? ` — ${e.note}` : "";
+        console.log(`  [${e.id}] ${e.kind}:${e.value}${note}`);
+      }
+    }
+    db.close();
+    return;
+  }
+
+  if (sub === "add") {
+    const target = args[1];
+    if (!target) die("Usage: publicguard exclude add owner/repo  OR  exclude add @owner");
+    let kind: ExclusionKind;
+    let value: string;
+    if (target.startsWith("@")) {
+      kind = "owner";
+      value = target.slice(1);
+    } else if (target.includes("/")) {
+      kind = "repo";
+      value = target;
+    } else {
+      die(`Unrecognised format '${target}'. Use owner/repo or @owner.`);
+    }
+    const note = args.slice(2).join(" ") || null;
+    excl.add(kind, value, note ?? undefined);
+    console.log(`Excluded: ${kind} ${value}`);
+    db.close();
+    return;
+  }
+
+  if (sub === "remove") {
+    const id = parseInt(args[1] ?? "", 10);
+    if (Number.isNaN(id)) die("Usage: publicguard exclude remove <id>");
+    excl.remove(id);
+    console.log(`Removed exclusion #${id}`);
+    db.close();
+    return;
+  }
+
+  die(`Unknown subcommand '${sub}'. Try: exclude list | exclude add | exclude remove`);
+}
+
 function printHelp(): void {
   console.log(`
 publicguard — good-faith secret-leak notifier for public GitHub repos
@@ -287,6 +345,13 @@ Usage:
   publicguard resume            Clear kill switch
   publicguard mode [shadow|capped|auto]  Get or set run mode
   publicguard cap [N]           Get or set daily posting cap
+  publicguard exclude list      Show excluded repos and owners
+  publicguard exclude add <owner/repo|@owner> [note]  Add exclusion
+  publicguard exclude remove <id>  Remove exclusion by ID
+
+Opt-out (.publicguard-ignore):
+  A repo owner can add a .publicguard-ignore file anywhere in their repo.
+  The scanner detects it and skips the repo permanently.
 
 Env vars:
   GITHUB_TOKEN          GitHub PAT with public_repo scope  (required for scan/post)

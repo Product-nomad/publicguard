@@ -1,7 +1,7 @@
 import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type { DailyStats, FindingStatus, QueuedFinding, RunMode } from "./types.js";
+import type { DailyStats, ExclusionKind, FindingStatus, QueuedFinding, RunMode } from "./types.js";
 
 export class DB {
   private readonly db: Database.Database;
@@ -42,6 +42,15 @@ export class DB {
       CREATE TABLE IF NOT EXISTS config (
         key   TEXT PRIMARY KEY,
         value TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS exclusions (
+        id       INTEGER PRIMARY KEY AUTOINCREMENT,
+        kind     TEXT NOT NULL,
+        value    TEXT NOT NULL,
+        added_at TEXT NOT NULL,
+        note     TEXT,
+        UNIQUE(kind, value)
       );
     `);
 
@@ -196,6 +205,34 @@ export class DB {
 
   setDailyCap(cap: number): void {
     this.setConfig("daily_cap", String(cap));
+  }
+
+  ensureExclusionsTable(): void {
+    // Table is created in migrate(); this is a no-op hook for ExclusionList.
+  }
+
+  insertExclusion(kind: ExclusionKind, value: string, note: string | null): void {
+    this.db.prepare(`
+      INSERT OR IGNORE INTO exclusions (kind, value, added_at, note)
+      VALUES (?, ?, ?, ?)
+    `).run(kind, value, new Date().toISOString(), note);
+  }
+
+  hasExclusion(kind: ExclusionKind, value: string): boolean {
+    const row = this.db
+      .prepare("SELECT 1 FROM exclusions WHERE kind = ? AND value = ?")
+      .get(kind, value);
+    return row !== undefined;
+  }
+
+  getExclusions(): import("./types.js").Exclusion[] {
+    return this.db
+      .prepare("SELECT * FROM exclusions ORDER BY added_at DESC")
+      .all() as import("./types.js").Exclusion[];
+  }
+
+  removeExclusion(id: number): void {
+    this.db.prepare("DELETE FROM exclusions WHERE id = ?").run(id);
   }
 
   close(): void {

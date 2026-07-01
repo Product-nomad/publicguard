@@ -1,5 +1,6 @@
 import { detectSecrets } from "./detect.js";
 import type { DB } from "./db.js";
+import { ExclusionList } from "./exclusions.js";
 import { GitHubSearchClient } from "./github-search.js";
 import { SEED_QUERIES } from "./seeds.js";
 import type { SeedQuery } from "./types.js";
@@ -21,6 +22,7 @@ export interface ScanSummary {
   filesInspected: number;
   newFindings: number;
   skippedDuplicates: number;
+  skippedExcluded: number;
   rateLimitHit: boolean;
 }
 
@@ -32,12 +34,14 @@ export async function runScan(
   const queries = opts.queries ?? SEED_QUERIES;
   const perQuery = Math.min(opts.perQuery ?? 10, 30);
   const log = opts.onProgress ?? (() => undefined);
+  const exclusions = new ExclusionList(db);
 
   const summary: ScanSummary = {
     queriesRun: 0,
     filesInspected: 0,
     newFindings: 0,
     skippedDuplicates: 0,
+    skippedExcluded: 0,
     rateLimitHit: false,
   };
 
@@ -68,7 +72,29 @@ export async function runScan(
     log(`  Found ${results.length} file(s) to inspect`);
 
     for (const result of results) {
+      // DB exclusion check — before any API call to the repo.
+      if (exclusions.isExcluded(result.repoOwner, result.repoName)) {
+        log(`  [EXCLUDED] ${result.repo}`);
+        summary.skippedExcluded++;
+        continue;
+      }
+
       summary.filesInspected++;
+
+      // .publicguard-ignore file check — one HEAD request, cached per repo.
+      const ignored = await client.fileExists(
+        result.repoOwner,
+        result.repoName,
+        ".publicguard-ignore",
+      );
+      if (ignored) {
+        log(`  [IGNORED] ${result.repo} (.publicguard-ignore present)`);
+        summary.skippedExcluded++;
+        // Auto-add to DB so we don't check again next run.
+        exclusions.add("repo", result.repo, "auto: .publicguard-ignore file detected");
+        continue;
+      }
+
       const content = await client.fetchFileContent(
         result.repoOwner,
         result.repoName,
