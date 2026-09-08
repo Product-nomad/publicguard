@@ -4,9 +4,11 @@
 
 GitHub Issues use GitHub's own notification system — the owner gets a notification through the same channel they already use. It's publicly attributable (the issue is visible if the owner makes it so), can't be mistaken for phishing the way a cold email from an unknown sender can, and doesn't require scraping any PII to find a contact address.
 
-## Human review before every post (during shadow mode)
+## Human review before every post, permanently
 
-The failure mode — a badly-worded template or broken detector posting to strangers' repos under a real identity — is expensive and public. So: full pipeline runs in shadow mode first, all findings go into a local review queue, nothing is posted until reviewed. The pipeline graduates to autonomous posting only after a batch has been inspected and the false-positive rate looks acceptable.
+The failure mode — a badly-worded template or broken detector posting to strangers' repos under a real identity — is expensive and public. Every finding goes into a local review queue and nothing is posted until a human explicitly approves it via `publicguard review`; the run mode (`shadow` / `capped` / `auto`) only controls whether scanning happens and whether posting is attempted at all, never approval.
+
+This was originally meant to graduate to autonomous posting (bulk-approving high-confidence findings) once a batch had been inspected and the false-positive rate looked acceptable. That auto-approval path shipped, then got exercised on a live batch and surfaced exactly the failure mode this section opened with — enough to make "review before every post" a permanent property of the pipeline instead of a shadow-mode-only stage. There is no mode, flag, or env var that bypasses it.
 
 ## Never validate credentials
 
@@ -28,4 +30,4 @@ The regex/entropy patterns in `src/patterns.ts` are ported directly from [agenta
 
 ## Opt-out respected immediately
 
-An opt-out request (GitHub Issue on this repo, or a `.publicguard-ignore` file in a target repo) excludes the owner or repo from all future scans. Exclusions are stored locally and checked before the scan reaches the API-call or queuing stage — not just before posting.
+An opt-out request (GitHub Issue on this repo, or a `.publicguard-ignore` file in a target repo) excludes the owner or repo from all future scans. GitHub's Code Search API has no per-repo exclude filter, so the initial search call itself still runs; exclusions are checked locally for every individual search result, before any further per-file API call (`.publicguard-ignore` check, content fetch) or queuing — not just before posting.
