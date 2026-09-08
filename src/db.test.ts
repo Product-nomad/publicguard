@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it } from "node:test";
 import Database from "better-sqlite3";
 import { DB } from "./db.js";
@@ -134,7 +137,8 @@ describe("DB findings", () => {
     // Simulate a database created before match_index/value_hash existed.
     // Uses a temp file (not :memory:) since the upgrade path requires
     // closing this seed connection and reopening via DB's constructor.
-    const path = `/tmp/claude-0/-root/2ed25b65-2c31-4db6-a7e5-3e171df1b7b6/scratchpad/db-migrate-test-${Date.now()}.db`;
+    const dir = mkdtempSync(join(tmpdir(), "publicguard-db-test-"));
+    const path = join(dir, "db-migrate-test.db");
     const seed = new Database(path);
     seed.exec(`
       CREATE TABLE findings (
@@ -179,5 +183,6 @@ describe("DB findings", () => {
     });
     assert.ok(second !== null, "post-migration schema must not collapse distinct secrets");
     db.close();
+    rmSync(dir, { recursive: true, force: true });
   });
 });
