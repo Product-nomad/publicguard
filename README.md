@@ -35,7 +35,7 @@ PublicGuard takes a different approach: find the leak, tell the owner privately 
 
 ## How notifications look
 
-Issues are opened under the [Product Nomad](https://github.com/productnomad) GitHub account with the title **"Possible exposed credential in this repo"** and a fixed template:
+Issues are opened under the [Product Nomad](https://github.com/Product-nomad) GitHub account with the title **"Possible exposed credential in this repo"** and a fixed template:
 
 - What was found (file path and commit SHA — no credential value)
 - What to do (rotate the credential, remove from git history, use env vars going forward)
@@ -48,7 +48,7 @@ No follow-up. No reply required. Close the issue when handled.
 
 ## Who's behind this
 
-This is run by [Product Nomad](https://github.com/productnomad) as part of an open security tooling project. PublicGuard is a companion to [SessionGuard](https://sessionguard.dev), which audits local AI agent sessions for exactly the same class of credential leak. The detection ruleset is shared between both tools.
+This is run by [Product Nomad](https://github.com/Product-nomad) as part of an open security tooling project. PublicGuard is a companion to [SessionGuard](https://sessionguard.dev), which audits local AI agent sessions for exactly the same class of credential leak. The detection ruleset is shared between both tools.
 
 This is not a company. There is no enterprise tier. There is no upsell.
 
