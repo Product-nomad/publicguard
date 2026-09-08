@@ -64,8 +64,12 @@ describe("DB findings", () => {
     db.close();
   });
 
-  it("autoApprove only bulk-approves high-confidence detectors", () => {
+  it("no finding reaches 'approved' — and therefore the post path — without an explicit review record, regardless of detector confidence", () => {
     const db = new DB(":memory:");
+    // A high-confidence detector (aws-access-key) and a low-confidence one
+    // (google-api-key) — postApproved() (src/poster.ts) only ever queries
+    // getByStatus("approved"), so this is equivalent to asserting neither
+    // can reach posting without a human running `publicguard review` first.
     db.insertFinding({
       ...baseFinding,
       detectorId: "aws-access-key",
@@ -85,16 +89,26 @@ describe("DB findings", () => {
       valueHash: "hash-b",
     });
 
-    const approvedCount = db.autoApprove();
-    assert.equal(approvedCount, 1);
-    assert.deepEqual(
-      db.getByStatus("pending").map((f) => f.detectorId),
-      ["google-api-key"],
+    // Freshly inserted findings must never appear as "approved" on their own.
+    assert.deepEqual(db.getByStatus("approved"), []);
+    assert.equal(db.getByStatus("pending").length, 2);
+    assert.equal(
+      "autoApprove" in db,
+      false,
+      "no bulk/automatic approval path may exist on DB",
     );
+
+    // Only an explicit review record (what `publicguard review` writes) can
+    // move a finding into the post path.
+    const [reviewed] = db.getByStatus("pending");
+    if (!reviewed) throw new Error("expected a pending finding to review");
+    db.updateStatus(reviewed.id, "approved");
+
     assert.deepEqual(
       db.getByStatus("approved").map((f) => f.detectorId),
-      ["aws-access-key"],
+      [reviewed.detectorId],
     );
+    assert.equal(db.getByStatus("pending").length, 1);
     db.close();
   });
 

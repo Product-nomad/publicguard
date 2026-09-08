@@ -17,9 +17,9 @@ export interface SecretPattern {
    * "low" marks patterns that are structurally ambiguous — the matched
    * format has legitimate public/client-side uses (Firebase/Google web keys,
    * ID-token JWTs, config values that merely look like passwords) so a regex
-   * match alone isn't strong evidence of a real leak. Low-confidence
-   * findings are excluded from autoApprove() and always require a human
-   * to run `publicguard review` before they can be posted.
+   * match alone isn't strong evidence of a real leak. Every finding requires
+   * a human to run `publicguard review` before it can be posted, regardless
+   * of confidence — this field is informational only.
    */
   confidence: PatternConfidence;
 }

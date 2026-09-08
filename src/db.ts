@@ -1,7 +1,6 @@
 import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { SECRET_PATTERNS } from "./patterns.js";
 import type { DailyStats, ExclusionKind, FindingStatus, QueuedFinding, RunMode } from "./types.js";
 
 export class DB {
@@ -199,24 +198,6 @@ export class DB {
 
   setDailyCap(cap: number): void {
     this.setConfig("daily_cap", String(cap));
-  }
-
-  /**
-   * Bulk-approve pending findings for auto-posting — but only for
-   * high-confidence detectors. Low-confidence patterns (ambiguous formats
-   * like Firebase/Google web keys) always require a human to approve them
-   * via `publicguard review`, regardless of run mode.
-   */
-  autoApprove(): number {
-    const highConfidenceIds = SECRET_PATTERNS.filter((p) => p.confidence !== "low").map((p) => p.id);
-    if (highConfidenceIds.length === 0) return 0;
-    const placeholders = highConfidenceIds.map(() => "?").join(",");
-    const result = this.db
-      .prepare(
-        `UPDATE findings SET status = 'approved' WHERE status = 'pending' AND detector_id IN (${placeholders})`,
-      )
-      .run(...highConfidenceIds);
-    return result.changes;
   }
 
   setLastCommentCount(id: number, count: number): void {

@@ -365,23 +365,20 @@ async function cmdRun(flags: string[] = []): Promise<void> {
   });
   if (watchSummary.newReplies > 0) {
     console.log(
-      `Reply check: ${watchSummary.newReplies} new repl${watchSummary.newReplies === 1 ? "y" : "ies"} — posting paused, skipping auto-approve/post this run.`,
+      `Reply check: ${watchSummary.newReplies} new repl${watchSummary.newReplies === 1 ? "y" : "ies"} — posting paused, skipping post this run.`,
     );
     db.close();
     return;
   }
 
-  // --- Auto-approve (high-confidence detectors only) ---
-  const approved = db.autoApprove();
-  if (approved > 0) console.log(`Auto-approved ${approved} finding(s)`);
+  // --- Post (only findings a human has already approved via `publicguard review`) ---
   const stillPending = db.getByStatus("pending").length;
   if (stillPending > 0) {
     console.log(
-      `${stillPending} low-confidence finding(s) awaiting manual review — run: publicguard review`,
+      `${stillPending} finding(s) awaiting manual review — run: publicguard review`,
     );
   }
 
-  // --- Post ---
   const postSummary = await postApproved(db, client, {
     onProgress: (msg) => console.log(msg),
   });
@@ -518,7 +515,7 @@ function printHelp(): void {
 publicguard — good-faith secret-leak notifier for public GitHub repos
 
 Usage:
-  publicguard run               Scan + auto-approve + post in one step (use this for cron)
+  publicguard run               Scan, then post any already-reviewed findings (use this for cron)
   publicguard schedule [interval]  Install systemd user timer for 'run' (default: 6h; options: 1h 3h 6h 12h daily)
   publicguard scan              Scan only — adds findings to queue, does not post
   publicguard post [--dry-run]  Post approved findings (respects guardrails)
@@ -531,7 +528,7 @@ Usage:
   publicguard exclude list      Show excluded repos and owners
   publicguard exclude add <owner/repo|@owner> [note]  Add exclusion
   publicguard exclude remove <id>  Remove exclusion by ID
-  publicguard review            Interactively review pending findings (manual alternative to auto-approve)
+  publicguard review            Interactively review pending findings — required before any post
 
 Opt-out (.publicguard-ignore):
   A repo owner can add a .publicguard-ignore file anywhere in their repo.
